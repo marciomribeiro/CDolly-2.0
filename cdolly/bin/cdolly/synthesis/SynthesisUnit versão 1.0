@@ -1,0 +1,382 @@
+package cdolly.synthesis;
+
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+
+import org.apache.log4j.Logger;
+import org.eclipse.cdt.core.dom.ast.ASTNodeProperty;
+import org.eclipse.cdt.core.dom.ast.IASTCompoundStatement;
+import org.eclipse.cdt.core.dom.ast.IASTConditionalExpression;
+import org.eclipse.cdt.core.dom.ast.IASTContinueStatement;
+import org.eclipse.cdt.core.dom.ast.IASTDeclSpecifier;
+import org.eclipse.cdt.core.dom.ast.IASTDeclaration;
+import org.eclipse.cdt.core.dom.ast.IASTDeclarationStatement;
+import org.eclipse.cdt.core.dom.ast.IASTDeclarator;
+import org.eclipse.cdt.core.dom.ast.IASTExpression;
+import org.eclipse.cdt.core.dom.ast.IASTExpressionStatement;
+import org.eclipse.cdt.core.dom.ast.IASTFunctionDefinition;
+import org.eclipse.cdt.core.dom.ast.IASTIdExpression;
+import org.eclipse.cdt.core.dom.ast.IASTIfStatement;
+import org.eclipse.cdt.core.dom.ast.IASTInitializer;
+import org.eclipse.cdt.core.dom.ast.IASTName;
+import org.eclipse.cdt.core.dom.ast.IASTNullStatement;
+import org.eclipse.cdt.core.dom.ast.IASTParameterDeclaration;
+import org.eclipse.cdt.core.dom.ast.IASTPointer;
+import org.eclipse.cdt.core.dom.ast.IASTPointerOperator;
+import org.eclipse.cdt.core.dom.ast.IASTPreprocessorIfdefStatement;
+import org.eclipse.cdt.core.dom.ast.IASTPreprocessorStatement;
+import org.eclipse.cdt.core.dom.ast.IASTSimpleDeclSpecifier;
+import org.eclipse.cdt.core.dom.ast.IASTSimpleDeclaration;
+import org.eclipse.cdt.core.dom.ast.IASTStatement;
+import org.eclipse.cdt.core.dom.ast.IASTTranslationUnit;
+import org.eclipse.cdt.core.dom.ast.IASTUnaryExpression;
+import org.eclipse.cdt.core.dom.ast.IASTWhileStatement;
+import org.eclipse.cdt.core.dom.ast.IBasicType.Kind;
+import org.eclipse.cdt.core.dom.ast.IType;
+import org.eclipse.cdt.core.dom.ast.c.ICNodeFactory;
+import org.eclipse.cdt.core.dom.rewrite.DeclarationGenerator;
+import org.eclipse.cdt.internal.core.dom.parser.c.CASTDeclarator;
+import org.eclipse.cdt.internal.core.dom.parser.c.CASTFunctionDeclarator;
+import org.eclipse.cdt.internal.core.dom.parser.c.CASTIdExpression;
+import org.eclipse.cdt.internal.core.dom.parser.c.CASTIfStatement;
+import org.eclipse.cdt.internal.core.dom.parser.c.CASTLiteralExpression;
+import org.eclipse.cdt.internal.core.dom.parser.c.CASTName;
+import org.eclipse.cdt.internal.core.dom.parser.c.CASTSimpleDeclSpecifier;
+import org.eclipse.cdt.internal.core.dom.parser.c.CBasicType;
+import org.eclipse.cdt.internal.core.dom.parser.c.CNodeFactory;
+
+import cdolly.model.inspector.AlloyInspector;
+import cdolly.model.inspector.IModelVisitor;
+import cdolly.model.inspector.IStringChecker;
+import edu.mit.csail.sdg.alloy4compiler.translator.A4Solution;
+
+/**
+ * @author Jeanderson Candido<br>
+ *         <a target="_blank"
+ *         href="http://jeandersonbc.github.io">http://jeandersonbc
+ *         .github.io</a>
+ * 
+ */
+public class SynthesisUnit {
+
+	private static Logger logger = Logger.getLogger(SynthesisUnit.class);
+
+	/**
+	 * Factory for C entities
+	 */
+	private static ICNodeFactory nodeFactory = CNodeFactory.getDefault();
+	private static DeclarationGenerator generator = DeclarationGenerator.create(nodeFactory);
+
+	private static IModelVisitor inspector;
+
+	/**
+	 * Extracts the C code specified by an Alloy model
+	 * 
+	 * @param alloyInstance
+	 *            the alloy specification for the code to be extracted.
+	 * @return A list of Translation Units ({@link IASTTranslationUnit}).
+	 */
+	public static List<IASTTranslationUnit> extractCode(A4Solution alloyInstance) {
+		System.out.print("extractCode SynthesisUnit\n");
+		List<IASTTranslationUnit> sources = new ArrayList<IASTTranslationUnit>();
+		
+		if (alloyInstance == null) {
+			logger.warn("Alloy instance is a null reference");
+			return sources;
+		}
+		System.out.print("AlloyInspector construtor\n");
+		//inspector é um objeto da class AlloyInspector
+		inspector = new AlloyInspector(alloyInstance);
+		
+		for (String translationUnit : inspector.getTranslationUnits()) {
+			System.out.print(translationUnit+" 55555\n");
+			sources.add(synthetizeUnitFrom(translationUnit));
+		}
+		
+		return sources;
+	}
+
+	private static IASTTranslationUnit synthetizeUnitFrom(String translationUnit) {
+		System.out.print("synthetizeUnitFrom AlloyInspector retorna -> \n");
+		IASTTranslationUnit source = nodeFactory.newTranslationUnit(null);
+		List<String> declarations = inspector.getGlobalDeclarationsFrom(translationUnit);
+		IStringChecker checker = inspector.getStringChecker();
+		int contador = 0;
+		for (String declaration : declarations) {
+			System.out.print("A\n");
+			if (checker.isFunctionDeclaration(declaration)) {
+				System.out.print("B\n");
+				source.addDeclaration(synthetizeFunctionFrom(declaration));
+
+			} else if (checker.isVariableDeclaration(declaration)) {
+				System.out.print("C\n");
+				source.addDeclaration(synthetizeVariableFrom(declaration, true));
+
+			}
+			contador++;
+			System.out.print("nova iteracao "+contador+"\n");
+		}
+		
+		System.out.print(source.getAllPreprocessorStatements() +"  } \n");
+		return source;
+	}
+
+	private static IASTDeclaration synthetizeVariableFrom(String declaration,
+			boolean isGlobal) {
+		System.out.print("synthetizeVariableFrom SynthesisUnit\n");
+		String name = inspector.getVariableNameFrom(declaration, isGlobal);
+		
+		IType type = extractVariableTypeFrom(declaration, isGlobal);
+		IASTDeclarator declarator = generator.createDeclaratorFromType(type,
+				name.toCharArray());
+		
+		IASTDeclSpecifier specifier = generator.createDeclSpecFromType(type);
+		IASTSimpleDeclaration varDeclaration = nodeFactory.newSimpleDeclaration(specifier);
+
+		IASTInitializer initializer = createLiteralFrom(type);
+		declarator.setInitializer(initializer);
+		varDeclaration.addDeclarator(declarator);
+
+		return varDeclaration;
+	}
+//-----------------------------------------------------------------------------
+	private static IASTDeclaration synthetizeFunctionFrom(String declaration) {
+		System.out.print("synthetizeFunctionFrom SynthesisUnit( "+ declaration + " ) \n");
+		IASTSimpleDeclSpecifier returnType = extractReturnTypeFrom(declaration);
+		CASTFunctionDeclarator functionDecl = extractFunctionDeclaratorFrom(declaration);
+		IASTCompoundStatement body = nodeFactory.newCompoundStatement();
+
+		
+		
+		List<IASTDeclarationStatement> locals = extractLocalDeclarationsFrom(declaration);
+		for (IASTDeclarationStatement decl : locals) {
+			body.addStatement(decl);
+		}
+		
+		//IASTIfStatement ifStatement = extractIfStatementFrom(declaration);
+		//IASTIfStatement resultado =  extractIfStatementFrom(declaration);
+		body.addStatement(extractIfStatementFrom(declaration));
+		System.out.print("pppppppppppppppppppppppppppppppppppppppppppppppp\n");
+		
+		//IASTIfStatement a = extractIfStatementFrom(declaration);
+		
+		// adicionar no body o objeto do tipo IASTExpression
+		
+		if (!isVoidReturn(returnType)) {
+			IASTExpression returnExpr = extractReturnStmtFrom(declaration,returnType);
+			body.addStatement(nodeFactory.newReturnStatement(returnExpr));
+		}
+		IASTFunctionDefinition function = nodeFactory.newFunctionDefinition(
+				returnType, functionDecl, body);
+
+		return function;
+	}
+
+	private static List<IASTDeclarationStatement> extractLocalDeclarationsFrom(
+			String declaration) {
+		System.out.print("extractLocalDeclarationsFrom SynthesisUnit \n");
+		List<IASTDeclarationStatement> locals = new LinkedList<>();
+		List<String> localDeclarations = inspector.getLocalDeclarationsFrom(declaration);
+		for (String localDecl : localDeclarations) {
+			String name = inspector.getVariableNameFrom(localDecl, false);
+			IType type = extractVariableTypeFrom(localDecl, false);
+			IASTDeclarator declarator = generator.createDeclaratorFromType(type, name.toCharArray());
+			IASTDeclSpecifier specifier = generator.createDeclSpecFromType(type);
+			IASTSimpleDeclaration varDeclaration = nodeFactory.newSimpleDeclaration(specifier);
+			IASTInitializer initializer = createLiteralFrom(type);
+			declarator.setInitializer(initializer);
+			varDeclaration.addDeclarator(declarator);
+
+			locals.add(nodeFactory.newDeclarationStatement(varDeclaration));
+		}
+		return locals;
+	}
+	
+	private static IASTIfStatement extractIfStatementFrom(String declaration) {
+		System.out.print("extractIfStatementFrom SysnthesisUnit\n    ");
+		String nameString = "LocalVariableId_0";
+		IASTName name = nodeFactory.newName(nameString.toCharArray());
+		IASTIdExpression condition  = nodeFactory.newIdExpression( name);
+		
+		IASTCompoundStatement body = nodeFactory.newCompoundStatement();
+		
+		IASTUnaryExpression unaryExpression = nodeFactory.newUnaryExpression(0, condition);
+		
+		
+		IASTExpressionStatement expressionStatement = nodeFactory.newExpressionStatement(unaryExpression);
+		IASTExpressionStatement expressionStatement2 = nodeFactory.newExpressionStatement(condition);
+		
+		body.addStatement(expressionStatement);
+		body.addStatement(expressionStatement2);
+		//IASTWhileStatement whileStatement = nodeFactory.newWhileStatement(condition, body);
+		//IASTPreprocessorIfdefStatement ifDef = whileStatement;
+		
+		
+		//ASTNodeProperty macro_name = new ASTNodeProperty(" CASA " );
+		
+		
+		
+		
+		IASTIfStatement ifStatement = nodeFactory.newIfStatement(condition, body, null );
+		//System.out.print(ifStatement + "\n");
+		
+		
+		return ifStatement;
+		
+		
+	}
+	
+
+	private static IASTExpression extractReturnStmtFrom(String declaration, IASTSimpleDeclSpecifier returnType) {
+		System.out.print("extractReturnStmtFrom SynthesisUnit \n");
+		IStringChecker checker = inspector.getStringChecker();
+		String rawReturnStmt = inspector.getReturnStmtFrom(declaration);
+		String rawIfStatement = inspector.getReturnIfStatementFrom(declaration);
+		System.out.print("\n-------------------------- \n");
+		System.out.print(rawIfStatement);
+		System.out.print("\n-------------------------- \n");
+		if (checker.isAIfStatement(rawIfStatement)) {
+			System.out.print("\n----------Entrou na condição de check--------------- \n");
+		}
+		
+		if (checker.isALiteralReturn(rawReturnStmt)) {
+			return createReturnLiteralFor(returnType);
+		}
+		throw new UnknownReturnStmtException(rawReturnStmt);
+	}
+
+	
+	
+	private static IASTExpression createReturnLiteralFor(
+			IASTSimpleDeclSpecifier returnType) {
+		System.out.print("		createReturnLiteralFor SynthesisUnit \n");
+
+		IASTExpression returnExpr = null;
+		if (returnType.getType() == IASTSimpleDeclSpecifier.t_int) {
+			returnExpr = nodeFactory.newLiteralExpression(returnType.getType(),
+					"1");
+		} else if (returnType.getType() == IASTSimpleDeclSpecifier.t_char) {
+			returnExpr = nodeFactory.newLiteralExpression(returnType.getType(),
+					"'a'");
+		} else if (returnType.getType() == IASTSimpleDeclSpecifier.t_double) {
+			returnExpr = nodeFactory.newLiteralExpression(returnType.getType(),
+					"3");
+			
+		} else if (returnType.getType() == IASTSimpleDeclSpecifier.t_float) {
+			returnExpr = nodeFactory.newLiteralExpression(returnType.getType(),
+					"2");
+		}
+		System.out.print("\n-------------\n" + returnExpr + "\n-------------\n");
+		return returnExpr;
+	}
+
+	private static boolean isVoidReturn(IASTSimpleDeclSpecifier returnType) {
+		return (returnType.getType() == IASTSimpleDeclSpecifier.t_void);
+	}
+
+	private static IASTSimpleDeclSpecifier extractReturnTypeFrom(String declaration) {
+		System.out.print("   extractReturnTypeFrom SynthesisUnit\n");
+		int type = IASTSimpleDeclSpecifier.t_void;
+
+		String rawType = inspector.getReturnTypeFrom(declaration);
+		IStringChecker checker = inspector.getStringChecker();
+		if (checker.isAnIntegerType(rawType)) {
+			type = IASTSimpleDeclSpecifier.t_int;
+
+		} else if (checker.isADoubleType(rawType)) {
+			type = IASTSimpleDeclSpecifier.t_double;
+
+		} else if (checker.isAFloatType(rawType)) {
+			type = IASTSimpleDeclSpecifier.t_float;
+		
+
+		} else if (checker.isACharType(rawType)) {
+			type = IASTSimpleDeclSpecifier.t_char;
+		}
+		return createTypeBasedOn(type);
+	}
+
+	private static IType extractVariableTypeFrom(String declaration,
+			boolean isGlobal) {
+		String rawType = inspector.getDeclaringTypeFrom(declaration, isGlobal);
+		IStringChecker checker = inspector.getStringChecker();
+		if (checker.isAnIntegerType(rawType)) {
+			return new CBasicType(Kind.eInt, 0);
+
+		} else if (checker.isADoubleType(rawType)) {
+			return new CBasicType(Kind.eDouble, 0);
+
+		} else if (checker.isAFloatType(rawType)) {
+			return new CBasicType(Kind.eFloat, 0);
+		} else if (checker.isACharType(rawType)) {
+			return new CBasicType(Kind.eChar, 0);
+		}
+		throw new UnknownRawTypeException(rawType);
+	}
+
+	private static IASTInitializer createLiteralFrom(IType type) {
+		char[] value = null;
+		int kind = 0;
+		if (type != null) {
+			if (type.isSameType(new CBasicType(Kind.eInt, 0))) {
+				kind = IASTSimpleDeclSpecifier.t_int;
+				value = "1".toCharArray();
+
+			} else if (type.isSameType(new CBasicType(Kind.eDouble, 0))) {
+				kind = IASTSimpleDeclSpecifier.t_double;
+				value = "2".toCharArray();
+
+			} else if (type.isSameType(new CBasicType(Kind.eFloat, 0))) {
+				kind = IASTSimpleDeclSpecifier.t_float;
+				value = "3".toCharArray();
+
+
+			} else if (type.isSameType(new CBasicType(Kind.eChar, 0))) {
+				kind = IASTSimpleDeclSpecifier.t_char;
+				value = "'a'".toCharArray();
+			}
+		}
+		return nodeFactory.newEqualsInitializer(new CASTLiteralExpression(kind,
+				value));
+	}
+
+	private static CASTFunctionDeclarator extractFunctionDeclaratorFrom(
+			String declaration) {
+		System.out.print("   extractFunctionDeclaratorFrom SynthesisUnit\n");
+		String rawFunctionName = inspector.getFunctionNameFrom(declaration);
+		IASTName functionName = nodeFactory.newName(rawFunctionName.toCharArray());
+
+		CASTFunctionDeclarator functionDecl = new CASTFunctionDeclarator(functionName);
+		List<IASTParameterDeclaration> params = extractParamaters(declaration);
+		for (IASTParameterDeclaration param : params) {
+			functionDecl.addParameterDeclaration(param);
+		}
+		return functionDecl;
+	}
+
+	private static List<IASTParameterDeclaration> extractParamaters(String declaration) {
+		System.out.print("   extractParamaters SynthesisUnit \n");
+		List<IASTParameterDeclaration> params = new LinkedList<IASTParameterDeclaration>();
+		List<String> rawParams = inspector.getParametersFrom(declaration);
+
+		IASTDeclSpecifier type = null;
+		char[] realName = null;
+		for (String rawParam : rawParams) {
+			realName = inspector.getVariableNameFrom(rawParam, false).toCharArray();
+			type = generator.createDeclSpecFromType(extractVariableTypeFrom(rawParam, false));
+
+			params.add(nodeFactory.newParameterDeclaration(type,new CASTDeclarator(new CASTName(realName))));
+
+		}
+		return params;
+	}
+
+	private static IASTSimpleDeclSpecifier createTypeBasedOn(int type) {
+		IASTSimpleDeclSpecifier typeSpecifier = new CASTSimpleDeclSpecifier();
+		typeSpecifier.setType(type);
+
+		return typeSpecifier;
+	}
+}
+
